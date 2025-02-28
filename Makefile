@@ -44,7 +44,7 @@ lint:
 # PROJECT
 .PHONY: blueprint
 blueprint:
-	mkdir $(LOCAL_BIN)
+	mkdir -p $(LOCAL_BIN)
 	mkdir -p api
 	mkdir -p cmd/orchestrator && echo 'package main' > cmd/orchestrator/main.go
 	mkdir -p cmd/agent && echo 'package main' > cmd/agent/main.go
