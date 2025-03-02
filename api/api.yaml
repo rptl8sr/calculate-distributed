@@ -22,8 +22,8 @@ paths:
             schema:
               $ref: '#/components/schemas/ExpressionRequest'
       responses:
-        '202':
-          description: Expression accepted
+        '201':
+          description: Expression received
           content:
             application/json:
               schema:
@@ -73,6 +73,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
       responses:
         '200':
           description: Expression status and result
@@ -192,6 +193,7 @@ components:
       properties:
         id:
           type: string
+          format: uuid
           description: ID expression accepted to calculate
 
     ExpressionsList:
@@ -207,6 +209,7 @@ components:
       properties:
         id:
           type: string
+          format: uuid
           description: Expression ID
         status:
           $ref: '#/components/schemas/Status'
@@ -218,6 +221,7 @@ components:
       properties:
         id:
           type: string
+          format: uuid
           description: Task ID
         arg1:
           type: number
@@ -240,6 +244,7 @@ components:
       properties:
         id:
           type: string
+          format: uuid
           description: Task ID
         result:
           type: number

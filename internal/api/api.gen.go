@@ -6,11 +6,8 @@ package api
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -19,6 +16,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for Operation.
@@ -46,15 +44,15 @@ type ErrorResponse struct {
 // Expression defines model for Expression.
 type Expression struct {
 	// Id Expression ID
-	Id     *string `json:"id,omitempty"`
-	Result *Result `json:"result"`
-	Status *Status `json:"status,omitempty"`
+	Id     *openapi_types.UUID `json:"id,omitempty"`
+	Result *Result             `json:"result"`
+	Status *Status             `json:"status,omitempty"`
 }
 
 // ExpressionAccepted defines model for ExpressionAccepted.
 type ExpressionAccepted struct {
 	// Id ID expression accepted to calculate
-	Id *string `json:"id,omitempty"`
+	Id *openapi_types.UUID `json:"id,omitempty"`
 }
 
 // ExpressionRequest defines model for ExpressionRequest.
@@ -77,8 +75,8 @@ type GetTaskResponse struct {
 	Arg2 *float32 `json:"arg2,omitempty"`
 
 	// Id Task ID
-	Id        *string    `json:"id,omitempty"`
-	Operation *Operation `json:"operation,omitempty"`
+	Id        *openapi_types.UUID `json:"id,omitempty"`
+	Operation *Operation          `json:"operation,omitempty"`
 
 	// OperationTime Time at which the task occurred
 	OperationTime *int `json:"operation_time,omitempty"`
@@ -90,7 +88,7 @@ type Operation string
 // PostTaskResultRequest defines model for PostTaskResultRequest.
 type PostTaskResultRequest struct {
 	// Id Task ID
-	Id *string `json:"id,omitempty"`
+	Id *openapi_types.UUID `json:"id,omitempty"`
 
 	// Result Task result
 	Result *float32 `json:"result,omitempty"`
@@ -118,807 +116,6 @@ type PostApiV1CalculateJSONRequestBody = ExpressionRequest
 // PostInternalTaskJSONRequestBody defines body for PostInternalTask for application/json ContentType.
 type PostInternalTaskJSONRequestBody = PostTaskResultRequest
 
-// RequestEditorFn  is the function signature for the RequestEditor callback function
-type RequestEditorFn func(ctx context.Context, req *http.Request) error
-
-// Doer performs HTTP requests.
-//
-// The standard http.Client implements this interface.
-type HttpRequestDoer interface {
-	Do(req *http.Request) (*http.Response, error)
-}
-
-// Client which conforms to the OpenAPI3 specification for this service.
-type Client struct {
-	// The endpoint of the server conforming to this interface, with scheme,
-	// https://api.deepmap.com for example. This can contain a path relative
-	// to the server, such as https://api.deepmap.com/dev-test, and all the
-	// paths in the swagger spec will be appended to the server.
-	Server string
-
-	// Doer for performing requests, typically a *http.Client with any
-	// customized settings, such as certificate chains.
-	Client HttpRequestDoer
-
-	// A list of callbacks for modifying requests which are generated before sending over
-	// the network.
-	RequestEditors []RequestEditorFn
-}
-
-// ClientOption allows setting custom parameters during construction
-type ClientOption func(*Client) error
-
-// Creates a new Client, with reasonable defaults
-func NewClient(server string, opts ...ClientOption) (*Client, error) {
-	// create a client with sane default values
-	client := Client{
-		Server: server,
-	}
-	// mutate client and add all optional params
-	for _, o := range opts {
-		if err := o(&client); err != nil {
-			return nil, err
-		}
-	}
-	// ensure the server URL always has a trailing slash
-	if !strings.HasSuffix(client.Server, "/") {
-		client.Server += "/"
-	}
-	// create httpClient, if not already present
-	if client.Client == nil {
-		client.Client = &http.Client{}
-	}
-	return &client, nil
-}
-
-// WithHTTPClient allows overriding the default Doer, which is
-// automatically created using http.Client. This is useful for tests.
-func WithHTTPClient(doer HttpRequestDoer) ClientOption {
-	return func(c *Client) error {
-		c.Client = doer
-		return nil
-	}
-}
-
-// WithRequestEditorFn allows setting up a callback function, which will be
-// called right before sending the request. This can be used to mutate the request.
-func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
-	return func(c *Client) error {
-		c.RequestEditors = append(c.RequestEditors, fn)
-		return nil
-	}
-}
-
-// The interface specification for the client above.
-type ClientInterface interface {
-	// PostApiV1CalculateWithBody request with any body
-	PostApiV1CalculateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PostApiV1Calculate(ctx context.Context, body PostApiV1CalculateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetApiV1Expressions request
-	GetApiV1Expressions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetApiV1ExpressionsId request
-	GetApiV1ExpressionsId(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetInternalTask request
-	GetInternalTask(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PostInternalTaskWithBody request with any body
-	PostInternalTaskWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PostInternalTask(ctx context.Context, body PostInternalTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-}
-
-func (c *Client) PostApiV1CalculateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostApiV1CalculateRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PostApiV1Calculate(ctx context.Context, body PostApiV1CalculateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostApiV1CalculateRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetApiV1Expressions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetApiV1ExpressionsRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetApiV1ExpressionsId(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetApiV1ExpressionsIdRequest(c.Server, id)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetInternalTask(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetInternalTaskRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PostInternalTaskWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostInternalTaskRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PostInternalTask(ctx context.Context, body PostInternalTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostInternalTaskRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// NewPostApiV1CalculateRequest calls the generic PostApiV1Calculate builder with application/json body
-func NewPostApiV1CalculateRequest(server string, body PostApiV1CalculateJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPostApiV1CalculateRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewPostApiV1CalculateRequestWithBody generates requests for PostApiV1Calculate with any type of body
-func NewPostApiV1CalculateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/calculate")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetApiV1ExpressionsRequest generates requests for GetApiV1Expressions
-func NewGetApiV1ExpressionsRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/expressions")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetApiV1ExpressionsIdRequest generates requests for GetApiV1ExpressionsId
-func NewGetApiV1ExpressionsIdRequest(server string, id string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v1/expressions/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetInternalTaskRequest generates requests for GetInternalTask
-func NewGetInternalTaskRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/task")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewPostInternalTaskRequest calls the generic PostInternalTask builder with application/json body
-func NewPostInternalTaskRequest(server string, body PostInternalTaskJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPostInternalTaskRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewPostInternalTaskRequestWithBody generates requests for PostInternalTask with any type of body
-func NewPostInternalTaskRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/task")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
-	for _, r := range c.RequestEditors {
-		if err := r(ctx, req); err != nil {
-			return err
-		}
-	}
-	for _, r := range additionalEditors {
-		if err := r(ctx, req); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ClientWithResponses builds on ClientInterface to offer response payloads
-type ClientWithResponses struct {
-	ClientInterface
-}
-
-// NewClientWithResponses creates a new ClientWithResponses, which wraps
-// Client with return type handling
-func NewClientWithResponses(server string, opts ...ClientOption) (*ClientWithResponses, error) {
-	client, err := NewClient(server, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return &ClientWithResponses{client}, nil
-}
-
-// WithBaseURL overrides the baseURL.
-func WithBaseURL(baseURL string) ClientOption {
-	return func(c *Client) error {
-		newBaseURL, err := url.Parse(baseURL)
-		if err != nil {
-			return err
-		}
-		c.Server = newBaseURL.String()
-		return nil
-	}
-}
-
-// ClientWithResponsesInterface is the interface specification for the client with responses above.
-type ClientWithResponsesInterface interface {
-	// PostApiV1CalculateWithBodyWithResponse request with any body
-	PostApiV1CalculateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostApiV1CalculateResponse, error)
-
-	PostApiV1CalculateWithResponse(ctx context.Context, body PostApiV1CalculateJSONRequestBody, reqEditors ...RequestEditorFn) (*PostApiV1CalculateResponse, error)
-
-	// GetApiV1ExpressionsWithResponse request
-	GetApiV1ExpressionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetApiV1ExpressionsResponse, error)
-
-	// GetApiV1ExpressionsIdWithResponse request
-	GetApiV1ExpressionsIdWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetApiV1ExpressionsIdResponse, error)
-
-	// GetInternalTaskWithResponse request
-	GetInternalTaskWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetInternalTaskResponse, error)
-
-	// PostInternalTaskWithBodyWithResponse request with any body
-	PostInternalTaskWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostInternalTaskResponse, error)
-
-	PostInternalTaskWithResponse(ctx context.Context, body PostInternalTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*PostInternalTaskResponse, error)
-}
-
-type PostApiV1CalculateResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON202      *ExpressionAccepted
-	JSON400      *ErrorResponse
-	JSON422      *ErrorResponse
-	JSON500      *ErrorResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r PostApiV1CalculateResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PostApiV1CalculateResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetApiV1ExpressionsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *ExpressionsList
-	JSON500      *ErrorResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r GetApiV1ExpressionsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetApiV1ExpressionsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetApiV1ExpressionsIdResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *struct {
-		Expression *Expression `json:"expression,omitempty"`
-	}
-	JSON404 *ErrorResponse
-	JSON500 *ErrorResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r GetApiV1ExpressionsIdResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetApiV1ExpressionsIdResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetInternalTaskResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *GetTaskResponse
-	JSON404      *ErrorResponse
-	JSON500      *ErrorResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r GetInternalTaskResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetInternalTaskResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type PostInternalTaskResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON201      *PostTaskResultResponse
-	JSON404      *ErrorResponse
-	JSON422      *ErrorResponse
-	JSON500      *ErrorResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r PostInternalTaskResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PostInternalTaskResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// PostApiV1CalculateWithBodyWithResponse request with arbitrary body returning *PostApiV1CalculateResponse
-func (c *ClientWithResponses) PostApiV1CalculateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostApiV1CalculateResponse, error) {
-	rsp, err := c.PostApiV1CalculateWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostApiV1CalculateResponse(rsp)
-}
-
-func (c *ClientWithResponses) PostApiV1CalculateWithResponse(ctx context.Context, body PostApiV1CalculateJSONRequestBody, reqEditors ...RequestEditorFn) (*PostApiV1CalculateResponse, error) {
-	rsp, err := c.PostApiV1Calculate(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostApiV1CalculateResponse(rsp)
-}
-
-// GetApiV1ExpressionsWithResponse request returning *GetApiV1ExpressionsResponse
-func (c *ClientWithResponses) GetApiV1ExpressionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetApiV1ExpressionsResponse, error) {
-	rsp, err := c.GetApiV1Expressions(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetApiV1ExpressionsResponse(rsp)
-}
-
-// GetApiV1ExpressionsIdWithResponse request returning *GetApiV1ExpressionsIdResponse
-func (c *ClientWithResponses) GetApiV1ExpressionsIdWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetApiV1ExpressionsIdResponse, error) {
-	rsp, err := c.GetApiV1ExpressionsId(ctx, id, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetApiV1ExpressionsIdResponse(rsp)
-}
-
-// GetInternalTaskWithResponse request returning *GetInternalTaskResponse
-func (c *ClientWithResponses) GetInternalTaskWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetInternalTaskResponse, error) {
-	rsp, err := c.GetInternalTask(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetInternalTaskResponse(rsp)
-}
-
-// PostInternalTaskWithBodyWithResponse request with arbitrary body returning *PostInternalTaskResponse
-func (c *ClientWithResponses) PostInternalTaskWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostInternalTaskResponse, error) {
-	rsp, err := c.PostInternalTaskWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostInternalTaskResponse(rsp)
-}
-
-func (c *ClientWithResponses) PostInternalTaskWithResponse(ctx context.Context, body PostInternalTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*PostInternalTaskResponse, error) {
-	rsp, err := c.PostInternalTask(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostInternalTaskResponse(rsp)
-}
-
-// ParsePostApiV1CalculateResponse parses an HTTP response from a PostApiV1CalculateWithResponse call
-func ParsePostApiV1CalculateResponse(rsp *http.Response) (*PostApiV1CalculateResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PostApiV1CalculateResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest ExpressionAccepted
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetApiV1ExpressionsResponse parses an HTTP response from a GetApiV1ExpressionsWithResponse call
-func ParseGetApiV1ExpressionsResponse(rsp *http.Response) (*GetApiV1ExpressionsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetApiV1ExpressionsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ExpressionsList
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetApiV1ExpressionsIdResponse parses an HTTP response from a GetApiV1ExpressionsIdWithResponse call
-func ParseGetApiV1ExpressionsIdResponse(rsp *http.Response) (*GetApiV1ExpressionsIdResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetApiV1ExpressionsIdResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest struct {
-			Expression *Expression `json:"expression,omitempty"`
-		}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetInternalTaskResponse parses an HTTP response from a GetInternalTaskWithResponse call
-func ParseGetInternalTaskResponse(rsp *http.Response) (*GetInternalTaskResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetInternalTaskResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest GetTaskResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePostInternalTaskResponse parses an HTTP response from a PostInternalTaskWithResponse call
-func ParsePostInternalTaskResponse(rsp *http.Response) (*PostInternalTaskResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PostInternalTaskResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest PostTaskResultResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Send expression to calculate
@@ -929,7 +126,7 @@ type ServerInterface interface {
 	GetApiV1Expressions(w http.ResponseWriter, r *http.Request)
 	// Get list of expression
 	// (GET /api/v1/expressions/{id})
-	GetApiV1ExpressionsId(w http.ResponseWriter, r *http.Request, id string)
+	GetApiV1ExpressionsId(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
 	// Get task (part of expression) to calculate
 	// (GET /internal/task)
 	GetInternalTask(w http.ResponseWriter, r *http.Request)
@@ -956,7 +153,7 @@ func (_ Unimplemented) GetApiV1Expressions(w http.ResponseWriter, r *http.Reques
 
 // Get list of expression
 // (GET /api/v1/expressions/{id})
-func (_ Unimplemented) GetApiV1ExpressionsId(w http.ResponseWriter, r *http.Request, id string) {
+func (_ Unimplemented) GetApiV1ExpressionsId(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1015,7 +212,7 @@ func (siw *ServerInterfaceWrapper) GetApiV1ExpressionsId(w http.ResponseWriter, 
 	var err error
 
 	// ------------- Path parameter "id" -------------
-	var id string
+	var id openapi_types.UUID
 
 	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
 	if err != nil {
@@ -1197,22 +394,23 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"U0KrgRMAAA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file
