@@ -1,3 +1,5 @@
+.PHONY: git-init git-checkout golangci-lint-install lint blueprint api-generate
+
 REPO_NAME := $(shell basename $(CURDIR))
 PROJECT := $(CURDIR)
 LOCAL_BIN := $(CURDIR)/bin
@@ -14,7 +16,6 @@ export
 endif
 
 # GIT
-.PHONY: git-init
 git-init:
 	gh repo create $(USER)/$(REPO_NAME) --private
 	git init
@@ -27,26 +28,29 @@ git-init:
 	git push -u origin master
 
 BN ?= dev
-.PHONY: git-checkout
+.PHONY:
 git-checkout:
 	git checkout -b $(BN)
 
 # LINT
-.PHONY: golangci-lint-install
 lint-install:
 	GOBIN=$(LOCAL_BIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
 
-.PHONY: lint
 lint:
 	$(LOCAL_BIN)/golangci-lint run ./...
 
 
 # PROJECT
-.PHONY: blueprint
 blueprint:
-	mkdir $(LOCAL_BIN)
+	mkdir -p $(LOCAL_BIN)
 	mkdir -p api
 	mkdir -p cmd/orchestrator && echo 'package main' > cmd/orchestrator/main.go
 	mkdir -p cmd/agent && echo 'package main' > cmd/agent/main.go
 	mkdir -p internal/model && echo 'package model' > internal/model/model.go
 	mkdir -p internal/logger && echo 'package logger' > internal/logger/logger.go
+
+api-generate:
+	go mod tidy
+	go mod download
+	go generate ./...
+

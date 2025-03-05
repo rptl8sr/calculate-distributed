@@ -1,0 +1,273 @@
+openapi: 3.0.0
+info:
+  title: Distributed calculate service
+  version: 1.0.0
+
+#servers:
+#  - url: http://localhost:8080
+#    description: Local run server
+#    variables:
+#      prefix:
+#        default: 'v1'
+#        description:
+
+paths:
+  /api/v1/calculate:
+    post:
+      summary: Send expression to calculate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExpressionRequest'
+      responses:
+        '201':
+          description: Expression received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExpressionAccepted'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Unprocessable expression
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/expressions:
+    get:
+      summary: Get list of expression
+      responses:
+        '200':
+          description: List of expression
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExpressionsList'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/expressions/{id}:
+    get:
+      summary: Get list of expression
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Expression status and result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  expression:
+                    $ref: '#/components/schemas/Expression'
+        '404':
+          description: Expression not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/task:
+    get:
+      summary: Get task (part of expression) to calculate
+      responses:
+        '200':
+          description: Task received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetTaskResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: Post task calculate result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostTaskResultRequest'
+      responses:
+        '201':
+          description: Task result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostTaskResultResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Task results not valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    Operation:
+      type: string
+      enum:
+        - '-'
+        - '+'
+        - '*'
+        - '/'
+      x-enum-varnames:
+        - Minus
+        - Plus
+        - Multiply
+        - Divide
+
+    Status:
+      type: string
+      enum:
+        - accepted
+        - processing
+        - success
+        - error
+
+    Result:
+      type: number
+      format: float
+      nullable: true
+
+    ExpressionRequest:
+      type: object
+      properties:
+        expression:
+          type: string
+          description: Expression to calculate
+
+    ExpressionAccepted:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ID expression accepted to calculate
+
+    ExpressionsList:
+      type: object
+      properties:
+        expressions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Expression'
+
+    Expression:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Expression ID
+        status:
+          $ref: '#/components/schemas/Status'
+        result:
+          $ref: '#/components/schemas/Result'
+
+    GetTaskResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Task ID
+        arg1:
+          type: number
+          format: float
+          nullable: false
+          description: The left operand
+        arg2:
+          type: number
+          format: float
+          nullable: false
+          description: The right operand
+        operation:
+          $ref: '#/components/schemas/Operation'
+        operation_time:
+          type: integer
+          description: Time at which the task occurred
+
+    PostTaskResultRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Task ID
+        result:
+          type: number
+          format: float
+          nullable: false
+          description: Task result
+
+    PostTaskResultResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          default: ok
+
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/Status'
+
+    ErrorResponse:
+      type: object
+      properties:
+        errors:
+          type: string
+          description: Error with details
