@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -13,17 +14,20 @@ import (
 var _ Storage = (*storage)(nil)
 
 type storage struct {
-	expressions map[*uuid.UUID]api.Expression
-	tasks       map[*uuid.UUID]api.GetTaskResponse
-	mu          sync.Mutex
+	operationTime map[api.Operation]time.Duration
+	expressions   sync.Map
+	tasks         sync.Map
+	//expressions   map[*uuid.UUID]api.Expression
+	//tasks         map[*uuid.UUID]api.GetTaskResponse
 }
 
 type Storage interface {
 	AddExpression(ctx context.Context, expression api.Expression) error
-	GetExpression(ctx context.Context, id *uuid.UUID) (api.Expression, error)
+	Expression(ctx context.Context, id uuid.UUID) (api.Expression, error)
+	ExpressionsList(ctx context.Context) ([]api.Expression, error)
 	UpdateExpression(ctx context.Context, expression api.Expression) error
 	AddTask(ctx context.Context, task api.GetTaskResponse) error
-	GetTask(ctx context.Context, id *uuid.UUID) (api.GetTaskResponse, error)
+	Task(ctx context.Context) (api.GetTaskResponse, error)
 	UpdateTask(ctx context.Context, task api.GetTaskResponse) error
 }
 
@@ -50,9 +54,28 @@ func (s *storage) AddExpression(_ context.Context, e api.Expression) error {
 	return nil
 }
 
-func (s *storage) GetExpression(ctx context.Context, id *uuid.UUID) (api.Expression, error) {
-	//TODO implement me
-	panic("implement me")
+func (s *storage) Expression(ctx context.Context, id uuid.UUID) (api.Expression, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	expr, ok := s.expressions[&id]
+	if !ok {
+		return api.Expression{}, ownErrors.ErrIDNotFound
+	}
+
+	return expr, nil
+}
+
+func (s *storage) ExpressionsList(_ context.Context) ([]api.Expression, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	exprs := make([]api.Expression, 0, len(s.expressions))
+	for _, expr := range s.expressions {
+		exprs = append(exprs, expr)
+	}
+
+	return exprs, nil
 }
 
 func (s *storage) UpdateExpression(ctx context.Context, expression api.Expression) error {
@@ -65,7 +88,7 @@ func (s *storage) AddTask(ctx context.Context, task api.GetTaskResponse) error {
 	panic("implement me")
 }
 
-func (s *storage) GetTask(ctx context.Context, id *uuid.UUID) (api.GetTaskResponse, error) {
+func (s *storage) Task(ctx context.Context) (api.GetTaskResponse, error) {
 	//TODO implement me
 	panic("implement me")
 }

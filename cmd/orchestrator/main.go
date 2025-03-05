@@ -1,32 +1,34 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-
-	"calculate-distributed/internal/api"
-	"calculate-distributed/internal/server"
+	app "calculate-distributed/internal/app/orchestrator"
+	"calculate-distributed/internal/logger"
 )
 
 func main() {
-	si := server.New()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	r := chi.NewMux()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+	a := app.Must()
 
-	h := api.HandlerFromMux(si, r)
+	go func() {
+		if err := a.Run(ctx); err != nil {
+			logger.Error("app.Run: ", "message", err.Error())
+			stop()
+		}
+	}()
 
-	s := &http.Server{
-		Addr:    ":8080",
-		Handler: h,
+	<-ctx.Done()
+	logger.Info("Shutdown signal received")
+
+	if err := a.Shutdown(); err != nil {
+		logger.Error("app.Close: ", "message", err.Error())
 	}
 
-	fmt.Println("Starting server on port 8080")
-	if err := s.ListenAndServe(); err != nil {
-		fmt.Println(err)
-	}
+	logger.Info("Shutdown complete")
 }

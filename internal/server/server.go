@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/google/uuid"
 	openapitypes "github.com/oapi-codegen/runtime/types"
 
 	"calculate-distributed/internal/api"
@@ -15,7 +16,7 @@ import (
 var _ api.ServerInterface = (*Server)(nil)
 
 type Server struct {
-	orchestrator orchestrator.Orchestrator
+	orchestrator service.Service
 }
 
 func (s Server) PostApiV1Calculate(w http.ResponseWriter, r *http.Request) {
@@ -59,18 +60,43 @@ func (s Server) PostApiV1Calculate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s Server) GetApiV1Expressions(w http.ResponseWriter, r *http.Request) {
-	//TODO implement me
-	panic("implement me")
+	exprList, err := s.orchestrator.ExpressionsList(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, api.ExpressionsList{Expressions: &exprList})
 }
 
 func (s Server) GetApiV1ExpressionsId(w http.ResponseWriter, r *http.Request, id openapitypes.UUID) {
-	//TODO implement me
-	panic("implement me")
+	if id == uuid.Nil {
+		respondError(w, http.StatusBadRequest, "ID is null")
+		return
+	}
+
+	expr, err := s.orchestrator.Expression(r.Context(), id)
+	if err != nil {
+		switch {
+		case errors.Is(err, ownErrors.ErrIDNotFound):
+			respondError(w, http.StatusNotFound, err.Error())
+			return
+		default:
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	respondJSON(w, http.StatusOK, expr)
 }
 
 func (s Server) GetInternalTask(w http.ResponseWriter, r *http.Request) {
-	//TODO implement me
-	panic("implement me")
+	task, err := s.orchestrator.Task(r.Context())
+	if err != nil {
+
+	}
+
+	respondJSON(w, http.StatusOK, task)
 }
 
 func (s Server) PostInternalTask(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +104,7 @@ func (s Server) PostInternalTask(w http.ResponseWriter, r *http.Request) {
 	panic("implement me")
 }
 
-func New(o orchestrator.Orchestrator) *Server {
+func New(o service.Service) *Server {
 	return &Server{
 		orchestrator: o,
 	}
